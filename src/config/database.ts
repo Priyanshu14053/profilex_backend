@@ -19,18 +19,26 @@ const buildPoolOptions = (): PoolOptions => {
   };
 
   // Configure TLS / SSL for remote hosted MySQL (e.g., Aiven MySQL)
-  if (env.DB.caCertPath && fs.existsSync(env.DB.caCertPath)) {
-    const ca = fs.readFileSync(env.DB.caCertPath, 'utf8');
-    options.ssl = {
-      ca,
-      rejectUnauthorized: env.DB.sslRejectUnauthorized,
-    };
-  } else {
-    // Default SSL mode for cloud databases (like Aiven)
-    options.ssl = {
-      rejectUnauthorized: env.DB.sslRejectUnauthorized,
-    };
+  if (env.DB.caCertPath) {
+    let ca: string | undefined;
+    if (fs.existsSync(env.DB.caCertPath)) {
+      ca = fs.readFileSync(env.DB.caCertPath, 'utf8');
+    } else if (env.DB.caCertPath.includes('BEGIN CERTIFICATE')) {
+      ca = env.DB.caCertPath;
+    }
+    if (ca) {
+      options.ssl = {
+        ca,
+        rejectUnauthorized: env.DB.sslRejectUnauthorized,
+      };
+      return options;
+    }
   }
+
+  // Default SSL mode for cloud databases (like Aiven)
+  options.ssl = {
+    rejectUnauthorized: env.DB.sslRejectUnauthorized,
+  };
 
   return options;
 };

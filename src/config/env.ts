@@ -32,7 +32,7 @@ export const env: AppConfig = {
     user: process.env.DB_USER || '',
     password: process.env.DB_PASSWORD || '',
     database: process.env.DB_NAME || 'profilex',
-    sslRejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false',
+    sslRejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED?.toLowerCase() === 'true',
     caCertPath: process.env.DB_CA_CERT || undefined,
   },
   JWT: {
