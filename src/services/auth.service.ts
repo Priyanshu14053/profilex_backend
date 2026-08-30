@@ -75,18 +75,46 @@ export class AuthService {
 
   /**
    * Logs in a user by identifier (email or username) and password
+   * Enforces account lockout policy:
+   * - Wrong username: "Username incorrect"
+   * - Wrong password 1st time: "Password incorrect. 2 attempts left"
+   * - Wrong password 2nd time: "Password incorrect. 1 attempt left"
+   * - Wrong password 3rd time: "Account locked. Contact admin"
+   * - Account already locked: "Account locked. Contact admin"
+   * - Login succeeds: attempts reset to 0 (3 available again)
    */
   async login(dto: LoginDto): Promise<AuthResponseData> {
     const identifier = dto.identifier.trim();
     const user = await this.userRepo.findByIdentifier(identifier);
 
     if (!user) {
-      throw new UnauthorizedError('Invalid credentials');
+      throw new UnauthorizedError('Username incorrect');
+    }
+
+    const isLocked = Boolean(user.is_locked) || (user.failed_attempts !== undefined && user.failed_attempts >= 3);
+    if (isLocked) {
+      throw new UnauthorizedError('Account locked. Contact admin');
     }
 
     const isMatch = await comparePassword(dto.password, user.password_hash);
     if (!isMatch) {
-      throw new UnauthorizedError('Invalid credentials');
+      const currentAttempts = user.failed_attempts ? Number(user.failed_attempts) : 0;
+      const newAttempts = currentAttempts + 1;
+
+      if (newAttempts >= 3) {
+        await this.userRepo.lockAccount(user.id, 3);
+        throw new UnauthorizedError('Account locked. Contact admin');
+      } else {
+        await this.userRepo.incrementFailedAttempts(user.id, newAttempts);
+        const remaining = 3 - newAttempts;
+        const attemptWord = remaining === 1 ? 'attempt' : 'attempts';
+        throw new UnauthorizedError(`Password incorrect. ${remaining} ${attemptWord} left`);
+      }
+    }
+
+    // Reset failed attempts upon successful login if user had prior failed attempts
+    if (user.failed_attempts && Number(user.failed_attempts) > 0) {
+      await this.userRepo.resetFailedAttempts(user.id);
     }
 
     // Generate JWT token containing only userId

@@ -138,7 +138,7 @@ describe('Auth Endpoints (/api/v1/auth)', () => {
     });
   });
 
-  describe('POST /api/v1/auth/login', () => {
+  describe('POST /api/v1/auth/login - Account Lockout Policy', () => {
     let hashedPassword = '';
 
     beforeAll(async () => {
@@ -153,13 +153,100 @@ describe('Auth Endpoints (/api/v1/auth)', () => {
       dob: '2002-01-01',
       username: 'priyanshu',
       password_hash: '',
+      failed_attempts: 0,
+      is_locked: 0,
     };
 
-    it('should successfully log in with email and valid password', async () => {
+    it('should return 401 with "Username incorrect" for wrong username/identifier', async () => {
+      jest.spyOn(userRepository, 'findByIdentifier').mockResolvedValue(null);
+
+      const res = await request(app)
+        .post('/api/v1/auth/login')
+        .send({ identifier: 'wrong_username', password: 'Password123' });
+
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toBe('Username incorrect');
+    });
+
+    it('should return 401 with "Password incorrect. 2 attempts left" on 1st failed attempt', async () => {
       jest.spyOn(userRepository, 'findByIdentifier').mockResolvedValue({
         ...mockUser,
         password_hash: hashedPassword,
+        failed_attempts: 0,
       });
+      const incrementSpy = jest.spyOn(userRepository, 'incrementFailedAttempts').mockResolvedValue();
+
+      const res = await request(app)
+        .post('/api/v1/auth/login')
+        .send({ identifier: 'priyanshu', password: 'WrongPassword' });
+
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toBe('Password incorrect. 2 attempts left');
+      expect(incrementSpy).toHaveBeenCalledWith('test-user-uuid', 1);
+    });
+
+    it('should return 401 with "Password incorrect. 1 attempt left" on 2nd failed attempt', async () => {
+      jest.spyOn(userRepository, 'findByIdentifier').mockResolvedValue({
+        ...mockUser,
+        password_hash: hashedPassword,
+        failed_attempts: 1,
+      });
+      const incrementSpy = jest.spyOn(userRepository, 'incrementFailedAttempts').mockResolvedValue();
+
+      const res = await request(app)
+        .post('/api/v1/auth/login')
+        .send({ identifier: 'priyanshu', password: 'WrongPassword' });
+
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toBe('Password incorrect. 1 attempt left');
+      expect(incrementSpy).toHaveBeenCalledWith('test-user-uuid', 2);
+    });
+
+    it('should lock account and return 401 with "Account locked. Contact admin" on 3rd failed attempt', async () => {
+      jest.spyOn(userRepository, 'findByIdentifier').mockResolvedValue({
+        ...mockUser,
+        password_hash: hashedPassword,
+        failed_attempts: 2,
+      });
+      const lockSpy = jest.spyOn(userRepository, 'lockAccount').mockResolvedValue();
+
+      const res = await request(app)
+        .post('/api/v1/auth/login')
+        .send({ identifier: 'priyanshu', password: 'WrongPassword' });
+
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toBe('Account locked. Contact admin');
+      expect(lockSpy).toHaveBeenCalledWith('test-user-uuid', 3);
+    });
+
+    it('should reject login immediately if account is already locked', async () => {
+      jest.spyOn(userRepository, 'findByIdentifier').mockResolvedValue({
+        ...mockUser,
+        password_hash: hashedPassword,
+        failed_attempts: 3,
+        is_locked: 1,
+      });
+
+      const res = await request(app)
+        .post('/api/v1/auth/login')
+        .send({ identifier: 'priyanshu', password: 'Password123' });
+
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toBe('Account locked. Contact admin');
+    });
+
+    it('should successfully log in with email and reset failed attempts to 0', async () => {
+      jest.spyOn(userRepository, 'findByIdentifier').mockResolvedValue({
+        ...mockUser,
+        password_hash: hashedPassword,
+        failed_attempts: 1,
+      });
+      const resetSpy = jest.spyOn(userRepository, 'resetFailedAttempts').mockResolvedValue();
 
       const res = await request(app)
         .post('/api/v1/auth/login')
@@ -172,13 +259,16 @@ describe('Auth Endpoints (/api/v1/auth)', () => {
       expect(res.body.data.user.id).toBe(mockUser.id);
       expect(res.body.data.user.email).toBe(mockUser.email);
       expect(res.body.data.user.password_hash).toBeUndefined();
+      expect(resetSpy).toHaveBeenCalledWith('test-user-uuid');
     });
 
-    it('should successfully log in with username and valid password', async () => {
+    it('should successfully log in with username when 0 failed attempts', async () => {
       jest.spyOn(userRepository, 'findByIdentifier').mockResolvedValue({
         ...mockUser,
         password_hash: hashedPassword,
+        failed_attempts: 0,
       });
+      const resetSpy = jest.spyOn(userRepository, 'resetFailedAttempts').mockResolvedValue();
 
       const res = await request(app)
         .post('/api/v1/auth/login')
@@ -187,33 +277,7 @@ describe('Auth Endpoints (/api/v1/auth)', () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.data.token).toBeDefined();
-    });
-
-    it('should return 401 for incorrect password', async () => {
-      jest.spyOn(userRepository, 'findByIdentifier').mockResolvedValue({
-        ...mockUser,
-        password_hash: hashedPassword,
-      });
-
-      const res = await request(app)
-        .post('/api/v1/auth/login')
-        .send({ identifier: 'priyanshu', password: 'WrongPassword' });
-
-      expect(res.status).toBe(401);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toBe('Invalid credentials');
-    });
-
-    it('should return 401 for unknown identifier', async () => {
-      jest.spyOn(userRepository, 'findByIdentifier').mockResolvedValue(null);
-
-      const res = await request(app)
-        .post('/api/v1/auth/login')
-        .send({ identifier: 'nonexistent', password: 'Password123' });
-
-      expect(res.status).toBe(401);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toBe('Invalid credentials');
+      expect(resetSpy).not.toHaveBeenCalled();
     });
   });
 

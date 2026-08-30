@@ -74,6 +74,19 @@ All backend endpoints return a uniform JSON format:
 }
 ```
 
+### Login Account Lockout Policy (`POST /api/v1/auth/login`)
+
+The backend tracks failed password attempts per account and enforces the following exact responses:
+
+| Situation | Response Message (`message`) | HTTP Status | Action Taken |
+| :--- | :--- | :--- | :--- |
+| Wrong username / identifier | **`Username incorrect`** | `401` | No attempt count changed |
+| Correct username + wrong password (1st time) | **`Password incorrect. 2 attempts left`** | `401` | Attempts set to 1 |
+| Correct username + wrong password (2nd time) | **`Password incorrect. 1 attempt left`** | `401` | Attempts set to 2 |
+| Correct username + wrong password (3rd time) | **`Account locked. Contact admin`** | `401` | Account locked (`is_locked = 1`) |
+| Account already locked | **`Account locked. Contact admin`** | `401` | Login blocked |
+| Correct password after failed attempts | **`Login successful`** | `200` | Attempts reset to 0 (3 available again) |
+
 ---
 
 ## 5. Dart Data Models

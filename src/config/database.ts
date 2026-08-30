@@ -47,6 +47,36 @@ const buildPoolOptions = (): PoolOptions => {
 export const pool: Pool = mysql.createPool(buildPoolOptions());
 
 /**
+ * Ensures required database schema columns exist (idempotent migration)
+ */
+export const ensureSchemaMigrations = async (connectionPool: Pool = pool): Promise<void> => {
+  try {
+    const [cols]: any = await connectionPool.query(
+      'SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?',
+      ['users']
+    );
+    const colNames = Array.isArray(cols) ? cols.map((c: any) => c.COLUMN_NAME) : [];
+
+    if (colNames.length > 0) {
+      if (!colNames.includes('failed_attempts')) {
+        await connectionPool.query('ALTER TABLE users ADD COLUMN failed_attempts INT NOT NULL DEFAULT 0');
+        console.log('[Database] Migrated column: failed_attempts');
+      }
+      if (!colNames.includes('is_locked')) {
+        await connectionPool.query('ALTER TABLE users ADD COLUMN is_locked TINYINT(1) NOT NULL DEFAULT 0');
+        console.log('[Database] Migrated column: is_locked');
+      }
+      if (!colNames.includes('locked_at')) {
+        await connectionPool.query('ALTER TABLE users ADD COLUMN locked_at TIMESTAMP NULL DEFAULT NULL');
+        console.log('[Database] Migrated column: locked_at');
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[Database] Schema migration warning: ${err.message || err}`);
+  }
+};
+
+/**
  * Tests connectivity to the remote Aiven MySQL database without exposing credentials
  */
 export const testDatabaseConnection = async (): Promise<boolean> => {
@@ -55,6 +85,7 @@ export const testDatabaseConnection = async (): Promise<boolean> => {
     await connection.query('SELECT 1');
     connection.release();
     console.log(`[Database] Successfully connected to hosted MySQL database: ${env.DB.database} on ${env.DB.host}:${env.DB.port}`);
+    await ensureSchemaMigrations(pool);
     return true;
   } catch (error: any) {
     console.error(`[Database] Connection test failed: ${error.message || error}`);

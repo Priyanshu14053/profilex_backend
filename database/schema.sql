@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS users (
     dob DATE NOT NULL,
     username VARCHAR(50) NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
+    failed_attempts INT NOT NULL DEFAULT 0,
+    is_locked TINYINT(1) NOT NULL DEFAULT 0,
+    locked_at TIMESTAMP NULL DEFAULT NULL,
 
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 

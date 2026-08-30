@@ -8,6 +8,9 @@ export interface UserRow extends RowDataPacket {
   dob: string;
   username: string;
   password_hash: string;
+  failed_attempts: number;
+  is_locked: number | boolean;
+  locked_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -20,6 +23,9 @@ export interface User {
   dob: string;
   username: string;
   password_hash: string;
+  failed_attempts?: number;
+  is_locked?: number | boolean;
+  locked_at?: string | null;
   created_at?: string;
   updated_at?: string;
 }

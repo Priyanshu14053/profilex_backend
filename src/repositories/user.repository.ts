@@ -16,6 +16,9 @@ export class UserRepository {
         dob,
         username,
         password_hash,
+        failed_attempts,
+        is_locked,
+        locked_at,
         created_at,
         updated_at
       FROM users
@@ -39,6 +42,9 @@ export class UserRepository {
         dob,
         username,
         password_hash,
+        failed_attempts,
+        is_locked,
+        locked_at,
         created_at,
         updated_at
       FROM users
@@ -62,6 +68,9 @@ export class UserRepository {
         dob,
         username,
         password_hash,
+        failed_attempts,
+        is_locked,
+        locked_at,
         created_at,
         updated_at
       FROM users
@@ -85,6 +94,9 @@ export class UserRepository {
         dob,
         username,
         password_hash,
+        failed_attempts,
+        is_locked,
+        locked_at,
         created_at,
         updated_at
       FROM users
@@ -108,6 +120,9 @@ export class UserRepository {
         dob,
         username,
         password_hash,
+        failed_attempts,
+        is_locked,
+        locked_at,
         created_at,
         updated_at
       FROM users
@@ -219,6 +234,60 @@ export class UserRepository {
     ]);
 
     return this.findById(id);
+  }
+
+  /**
+   * Increments failed login attempts for a user
+   */
+  async incrementFailedAttempts(userId: string, attempts: number): Promise<void> {
+    const sql = `
+      UPDATE users
+      SET failed_attempts = ?
+      WHERE id = ?
+    `;
+    await pool.execute<ResultSetHeader>(sql, [attempts, userId]);
+  }
+
+  /**
+   * Locks user account and sets failed attempts to 3 (or provided count)
+   */
+  async lockAccount(userId: string, attempts: number = 3): Promise<void> {
+    const sql = `
+      UPDATE users
+      SET
+        failed_attempts = ?,
+        is_locked = 1,
+        locked_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `;
+    await pool.execute<ResultSetHeader>(sql, [attempts, userId]);
+  }
+
+  /**
+   * Resets failed login attempts to 0
+   */
+  async resetFailedAttempts(userId: string): Promise<void> {
+    const sql = `
+      UPDATE users
+      SET failed_attempts = 0
+      WHERE id = ?
+    `;
+    await pool.execute<ResultSetHeader>(sql, [userId]);
+  }
+
+  /**
+   * Unlocks an account and resets failed attempts
+   */
+  async unlockAccount(userId: string): Promise<void> {
+    const sql = `
+      UPDATE users
+      SET
+        is_locked = 0,
+        failed_attempts = 0,
+        locked_at = NULL
+      WHERE id = ?
+    `;
+    await pool.execute<ResultSetHeader>(sql, [userId]);
   }
 }
 
