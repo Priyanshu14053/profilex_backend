@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { userRepository, UserRepository } from '../repositories/user.repository';
+import { loginHistoryRepository, LoginHistoryRepository } from '../repositories/login-history.repository';
 import { hashPassword, comparePassword } from '../utils/password';
 import { signJwt } from '../utils/jwt';
 import { ConflictError, UnauthorizedError } from '../utils/errors';
@@ -19,8 +20,16 @@ export interface LoginDto {
   password: string;
 }
 
+export interface LoginMetadata {
+  ip_address?: string;
+  user_agent?: string;
+}
+
 export class AuthService {
-  constructor(private userRepo: UserRepository = userRepository) {}
+  constructor(
+    private userRepo: UserRepository = userRepository,
+    private loginHistoryRepo: LoginHistoryRepository = loginHistoryRepository
+  ) {}
 
   /**
    * Registers a new user with duplicate checks and bcrypt password hashing
@@ -83,16 +92,36 @@ export class AuthService {
    * - Account already locked: "Account locked. Contact admin"
    * - Login succeeds: attempts reset to 0 (3 available again)
    */
-  async login(dto: LoginDto): Promise<AuthResponseData> {
+  async login(dto: LoginDto, meta?: LoginMetadata): Promise<AuthResponseData> {
     const identifier = dto.identifier.trim();
     const user = await this.userRepo.findByIdentifier(identifier);
 
     if (!user) {
+      await this.loginHistoryRepo
+        .create({
+          user_id: null,
+          identifier,
+          status: 'FAILED',
+          failure_reason: 'Username incorrect',
+          ip_address: meta?.ip_address,
+          user_agent: meta?.user_agent,
+        })
+        .catch((err) => console.warn(`[LoginHistory] Failed to log: ${err.message}`));
       throw new UnauthorizedError('Username incorrect');
     }
 
     const isLocked = Boolean(user.is_locked) || (user.failed_attempts !== undefined && user.failed_attempts >= 3);
     if (isLocked) {
+      await this.loginHistoryRepo
+        .create({
+          user_id: user.id,
+          identifier,
+          status: 'LOCKED',
+          failure_reason: 'Account locked. Contact admin',
+          ip_address: meta?.ip_address,
+          user_agent: meta?.user_agent,
+        })
+        .catch((err) => console.warn(`[LoginHistory] Failed to log: ${err.message}`));
       throw new UnauthorizedError('Account locked. Contact admin');
     }
 
@@ -103,12 +132,33 @@ export class AuthService {
 
       if (newAttempts >= 3) {
         await this.userRepo.lockAccount(user.id, 3);
+        await this.loginHistoryRepo
+          .create({
+            user_id: user.id,
+            identifier,
+            status: 'LOCKED',
+            failure_reason: 'Account locked. Contact admin (3 failed attempts)',
+            ip_address: meta?.ip_address,
+            user_agent: meta?.user_agent,
+          })
+          .catch((err) => console.warn(`[LoginHistory] Failed to log: ${err.message}`));
         throw new UnauthorizedError('Account locked. Contact admin');
       } else {
         await this.userRepo.incrementFailedAttempts(user.id, newAttempts);
         const remaining = 3 - newAttempts;
         const attemptWord = remaining === 1 ? 'attempt' : 'attempts';
-        throw new UnauthorizedError(`Password incorrect. ${remaining} ${attemptWord} left`);
+        const message = `Password incorrect. ${remaining} ${attemptWord} left`;
+        await this.loginHistoryRepo
+          .create({
+            user_id: user.id,
+            identifier,
+            status: 'FAILED',
+            failure_reason: message,
+            ip_address: meta?.ip_address,
+            user_agent: meta?.user_agent,
+          })
+          .catch((err) => console.warn(`[LoginHistory] Failed to log: ${err.message}`));
+        throw new UnauthorizedError(message);
       }
     }
 
@@ -116,6 +166,18 @@ export class AuthService {
     if (user.failed_attempts && Number(user.failed_attempts) > 0) {
       await this.userRepo.resetFailedAttempts(user.id);
     }
+
+    // Record successful login in history
+    await this.loginHistoryRepo
+      .create({
+        user_id: user.id,
+        identifier,
+        status: 'SUCCESS',
+        failure_reason: null,
+        ip_address: meta?.ip_address,
+        user_agent: meta?.user_agent,
+      })
+      .catch((err) => console.warn(`[LoginHistory] Failed to log: ${err.message}`));
 
     // Generate JWT token containing only userId
     const token = signJwt(user.id);

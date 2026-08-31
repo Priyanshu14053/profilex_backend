@@ -16,7 +16,13 @@ export class AuthController {
 
   login = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const result = await this.service.login(req.body);
+      const forwarded = req.headers['x-forwarded-for'];
+      const ip_address = typeof forwarded === 'string'
+        ? forwarded.split(',')[0].trim()
+        : req.socket.remoteAddress || req.ip;
+      const user_agent = req.headers['user-agent'] as string | undefined;
+
+      const result = await this.service.login(req.body, { ip_address, user_agent });
       sendSuccess(res, 'Login successful', result, 200);
     } catch (error) {
       next(error);

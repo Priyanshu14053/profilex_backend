@@ -1,12 +1,14 @@
 import request from 'supertest';
 import { app } from '../../src/app';
 import { userRepository } from '../../src/repositories/user.repository';
+import { loginHistoryRepository } from '../../src/repositories/login-history.repository';
 import { hashPassword } from '../../src/utils/password';
 import { signJwt } from '../../src/utils/jwt';
 
 describe('Auth Endpoints (/api/v1/auth)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.spyOn(loginHistoryRepository, 'create').mockResolvedValue();
   });
 
   describe('POST /api/v1/auth/register', () => {
@@ -278,6 +280,59 @@ describe('Auth Endpoints (/api/v1/auth)', () => {
       expect(res.body.success).toBe(true);
       expect(res.body.data.token).toBeDefined();
       expect(resetSpy).not.toHaveBeenCalled();
+    });
+
+    it('should log successful login to login history repository with client metadata', async () => {
+      const historySpy = jest.spyOn(loginHistoryRepository, 'create').mockResolvedValue();
+      jest.spyOn(userRepository, 'findByIdentifier').mockResolvedValue({
+        ...mockUser,
+        password_hash: hashedPassword,
+        failed_attempts: 0,
+      });
+
+      const res = await request(app)
+        .post('/api/v1/auth/login')
+        .set('User-Agent', 'Mozilla/5.0 TestBrowser')
+        .set('X-Forwarded-For', '203.0.113.195')
+        .send({ identifier: 'priyanshu', password: 'Password123' });
+
+      expect(res.status).toBe(200);
+      expect(historySpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user_id: 'test-user-uuid',
+          identifier: 'priyanshu',
+          status: 'SUCCESS',
+          failure_reason: null,
+          ip_address: '203.0.113.195',
+          user_agent: 'Mozilla/5.0 TestBrowser',
+        })
+      );
+    });
+
+    it('should log failed login to login history repository when password is wrong', async () => {
+      const historySpy = jest.spyOn(loginHistoryRepository, 'create').mockResolvedValue();
+      jest.spyOn(userRepository, 'findByIdentifier').mockResolvedValue({
+        ...mockUser,
+        password_hash: hashedPassword,
+        failed_attempts: 0,
+      });
+      jest.spyOn(userRepository, 'incrementFailedAttempts').mockResolvedValue();
+
+      const res = await request(app)
+        .post('/api/v1/auth/login')
+        .set('User-Agent', 'TestMobileApp')
+        .send({ identifier: 'priyanshu', password: 'WrongPassword' });
+
+      expect(res.status).toBe(401);
+      expect(historySpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user_id: 'test-user-uuid',
+          identifier: 'priyanshu',
+          status: 'FAILED',
+          failure_reason: 'Password incorrect. 2 attempts left',
+          user_agent: 'TestMobileApp',
+        })
+      );
     });
   });
 
