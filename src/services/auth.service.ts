@@ -16,7 +16,9 @@ export interface RegisterDto {
 }
 
 export interface LoginDto {
-  identifier: string;
+  identifier?: string;
+  username?: string;
+  email?: string;
   password: string;
 }
 
@@ -93,7 +95,7 @@ export class AuthService {
   /**
    * Logs in a user by identifier (email or username) and password
    * Enforces 3-failed-attempt lockout policy:
-   * - Wrong identifier: "Username incorrect" (HTTP 401)
+   * - Wrong identifier: "Username or email not found" (HTTP 401)
    * - 1st failed attempt: "Invalid password. 2 attempts remaining." (HTTP 401)
    * - 2nd failed attempt: "Invalid password. 1 attempt remaining." (HTTP 401)
    * - 3rd failed attempt: Lockout for 30s (HTTP 429)
@@ -101,7 +103,7 @@ export class AuthService {
    * - Login succeeds: attempts reset to 0 and lockUntil = null
    */
   async login(dto: LoginDto, meta?: LoginMetadata): Promise<AuthResponseData> {
-    const identifier = dto.identifier.trim();
+    const identifier = (dto.identifier || dto.username || dto.email || '').toLowerCase().trim();
     const user = await this.userRepo.findByIdentifier(identifier);
 
     if (!user) {
@@ -110,12 +112,12 @@ export class AuthService {
           user_id: null,
           identifier,
           status: 'FAILED',
-          failure_reason: 'Username incorrect',
+          failure_reason: 'Username or email not found',
           ip_address: meta?.ip_address,
           user_agent: meta?.user_agent,
         })
         .catch((err) => console.warn(`[LoginHistory] Failed to log: ${err.message}`));
-      throw new UnauthorizedError('Username incorrect');
+      throw new UnauthorizedError('Username or email not found');
     }
 
     const lockUntilVal = user.lock_until || user.lockUntil;
@@ -133,7 +135,7 @@ export class AuthService {
       const failureData = {
         attemptsRemaining: 0,
         maxAttempts: 3,
-        failedAttempts: user.failed_attempts ? Number(user.failed_attempts) : 3,
+        failedAttempts: user.failedAttempts !== undefined ? Number(user.failedAttempts) : (user.failed_attempts ? Number(user.failed_attempts) : 3),
         accountLocked: true,
         ...(lockUntilVal ? { lockUntil: typeof lockUntilVal === 'string' ? lockUntilVal : (lockUntilVal as any).toISOString?.() || String(lockUntilVal) } : {}),
       };
@@ -157,7 +159,7 @@ export class AuthService {
       // If previous lock expired, reset base attempts to 0 for a fresh cycle
       const baseAttempts = (lockUntilTime !== null && lockUntilTime <= now)
         ? 0
-        : (user.failed_attempts ? Number(user.failed_attempts) : 0);
+        : (user.failedAttempts !== undefined ? Number(user.failedAttempts) : (user.failed_attempts ? Number(user.failed_attempts) : 0));
       const newAttempts = baseAttempts + 1;
 
       if (newAttempts >= 3) {

@@ -222,7 +222,7 @@ describe('Auth Endpoints (/api/v1/auth)', () => {
       updated_at: '2026-08-30 20:00:00',
     };
 
-    it('should return 401 with "Username incorrect" for wrong username/identifier', async () => {
+    it('should return 401 with "Username or email not found" for wrong username/identifier', async () => {
       jest.spyOn(userRepository, 'findByIdentifier').mockResolvedValue(null);
 
       const res = await request(app)
@@ -231,7 +231,7 @@ describe('Auth Endpoints (/api/v1/auth)', () => {
 
       expect(res.status).toBe(401);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toBe('Username incorrect');
+      expect(res.body.message).toBe('Username or email not found');
     });
 
     it('should return 401 with remaining attempts and mobile JSON structure on 1st failed attempt', async () => {
@@ -255,6 +255,28 @@ describe('Auth Endpoints (/api/v1/auth)', () => {
         failedAttempts: 1,
         accountLocked: false,
       });
+      expect(res.body.failedAttempts).toBe(1);
+      expect(res.body.attemptsRemaining).toBe(2);
+      expect(incrementSpy).toHaveBeenCalledWith('test-user-uuid', 1);
+    });
+
+    it('should accept username field in payload and increment failed attempts', async () => {
+      jest.spyOn(userRepository, 'findByIdentifier').mockResolvedValue({
+        ...mockUser,
+        password_hash: hashedPassword,
+        failed_attempts: 0,
+      });
+      const incrementSpy = jest.spyOn(userRepository, 'incrementFailedAttempts').mockResolvedValue();
+
+      const res = await request(app)
+        .post('/api/v1/auth/login')
+        .send({ username: 'priyanshu', password: 'WrongPassword' });
+
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toBe('Invalid password. 2 attempts remaining.');
+      expect(res.body.data.failedAttempts).toBe(1);
+      expect(res.body.failedAttempts).toBe(1);
       expect(incrementSpy).toHaveBeenCalledWith('test-user-uuid', 1);
     });
 

@@ -28,11 +28,12 @@ export const sendError = (
   errors?: any[],
   data?: any
 ): Response => {
-  const body: ApiResponse = {
+  const body: ApiResponse & Record<string, any> = {
     success: false,
     message,
     ...(data !== undefined && { data }),
     ...(errors !== undefined && { errors }),
+    ...(data && typeof data === 'object' && !Array.isArray(data) ? data : {}),
   };
   return res.status(statusCode).json(body);
 };

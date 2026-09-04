@@ -2,6 +2,24 @@ import { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { pool } from '../config/database';
 import { User, UserCreateInput, UserRow, UserUpdateInput } from '../models/user.model';
 
+export const mapUser = (row: any): User | null => {
+  if (!row) return null;
+  const failedAttempts = row.failedAttempts !== undefined
+    ? Number(row.failedAttempts)
+    : (row.failed_attempts !== undefined ? Number(row.failed_attempts) : 0);
+  const lockUntil = row.lockUntil !== undefined
+    ? (row.lockUntil || null)
+    : (row.lock_until || null);
+
+  return {
+    ...row,
+    failed_attempts: failedAttempts,
+    failedAttempts,
+    lock_until: lockUntil,
+    lockUntil,
+  };
+};
+
 export class UserRepository {
   /**
    * Finds a user by primary key ID
@@ -17,9 +35,11 @@ export class UserRepository {
         username,
         password_hash,
         failed_attempts,
+        failed_attempts AS failedAttempts,
         is_locked,
         locked_at,
         lock_until,
+        lock_until AS lockUntil,
         created_at,
         updated_at
       FROM users
@@ -27,7 +47,7 @@ export class UserRepository {
       LIMIT 1
     `;
     const [rows] = await pool.execute<UserRow[]>(sql, [id]);
-    return rows.length > 0 ? rows[0] : null;
+    return rows.length > 0 ? mapUser(rows[0]) : null;
   }
 
   /**
@@ -44,9 +64,11 @@ export class UserRepository {
         username,
         password_hash,
         failed_attempts,
+        failed_attempts AS failedAttempts,
         is_locked,
         locked_at,
         lock_until,
+        lock_until AS lockUntil,
         created_at,
         updated_at
       FROM users
@@ -54,7 +76,7 @@ export class UserRepository {
       LIMIT 1
     `;
     const [rows] = await pool.execute<UserRow[]>(sql, [email.trim()]);
-    return rows.length > 0 ? rows[0] : null;
+    return rows.length > 0 ? mapUser(rows[0]) : null;
   }
 
   /**
@@ -71,9 +93,11 @@ export class UserRepository {
         username,
         password_hash,
         failed_attempts,
+        failed_attempts AS failedAttempts,
         is_locked,
         locked_at,
         lock_until,
+        lock_until AS lockUntil,
         created_at,
         updated_at
       FROM users
@@ -81,7 +105,7 @@ export class UserRepository {
       LIMIT 1
     `;
     const [rows] = await pool.execute<UserRow[]>(sql, [username.trim()]);
-    return rows.length > 0 ? rows[0] : null;
+    return rows.length > 0 ? mapUser(rows[0]) : null;
   }
 
   /**
@@ -98,9 +122,11 @@ export class UserRepository {
         username,
         password_hash,
         failed_attempts,
+        failed_attempts AS failedAttempts,
         is_locked,
         locked_at,
         lock_until,
+        lock_until AS lockUntil,
         created_at,
         updated_at
       FROM users
@@ -108,7 +134,7 @@ export class UserRepository {
       LIMIT 1
     `;
     const [rows] = await pool.execute<UserRow[]>(sql, [mobile.trim()]);
-    return rows.length > 0 ? rows[0] : null;
+    return rows.length > 0 ? mapUser(rows[0]) : null;
   }
 
   /**
@@ -125,18 +151,20 @@ export class UserRepository {
         username,
         password_hash,
         failed_attempts,
+        failed_attempts AS failedAttempts,
         is_locked,
         locked_at,
         lock_until,
+        lock_until AS lockUntil,
         created_at,
         updated_at
       FROM users
       WHERE LOWER(email) = LOWER(?) OR LOWER(username) = LOWER(?)
       LIMIT 1
     `;
-    const cleanId = identifier.trim();
+    const cleanId = identifier.trim().toLowerCase();
     const [rows] = await pool.execute<UserRow[]>(sql, [cleanId, cleanId]);
-    return rows.length > 0 ? rows[0] : null;
+    return rows.length > 0 ? mapUser(rows[0]) : null;
   }
 
   /**

@@ -95,10 +95,14 @@ export const registerValidator = [
 ];
 
 export const loginValidator = [
-  body('identifier')
-    .trim()
-    .notEmpty()
-    .withMessage('Identifier (email or username) is required'),
+  body()
+    .custom((_, { req }) => {
+      const identifier = req.body?.identifier || req.body?.username || req.body?.email;
+      if (!identifier || typeof identifier !== 'string' || identifier.trim().length === 0) {
+        throw new Error('Username or email is required');
+      }
+      return true;
+    }),
 
   body('password')
     .notEmpty()
