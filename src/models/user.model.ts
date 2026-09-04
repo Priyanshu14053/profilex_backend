@@ -11,6 +11,7 @@ export interface UserRow extends RowDataPacket {
   failed_attempts: number;
   is_locked: number | boolean;
   locked_at: string | null;
+  lock_until: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -26,6 +27,9 @@ export interface User {
   failed_attempts?: number;
   is_locked?: number | boolean;
   locked_at?: string | null;
+  lock_until?: string | null;
+  failedAttempts?: number;
+  lockUntil?: string | null;
   created_at?: string;
   updated_at?: string;
 }

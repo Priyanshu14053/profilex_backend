@@ -76,16 +76,30 @@ All backend endpoints return a uniform JSON format:
 
 ### Login Account Lockout Policy (`POST /api/v1/auth/login`)
 
-The backend tracks failed password attempts per account and enforces the following exact responses:
+The backend tracks `failedAttempts` and `lockUntil` per user account, enforcing a 3-attempt lockout with 30-second duration:
 
-| Situation | Response Message (`message`) | HTTP Status | Action Taken |
-| :--- | :--- | :--- | :--- |
-| Wrong username / identifier | **`Username incorrect`** | `401` | No attempt count changed |
-| Correct username + wrong password (1st time) | **`Password incorrect. 2 attempts left`** | `401` | Attempts set to 1 |
-| Correct username + wrong password (2nd time) | **`Password incorrect. 1 attempt left`** | `401` | Attempts set to 2 |
-| Correct username + wrong password (3rd time) | **`Account locked. Contact admin`** | `401` | Account locked (`is_locked = 1`) |
-| Account already locked | **`Account locked. Contact admin`** | `401` | Login blocked |
-| Correct password after failed attempts | **`Login successful`** | `200` | Attempts reset to 0 (3 available again) |
+| Situation | Response Message (`message`) | HTTP Status | Response Data (`data`) | Action Taken |
+| :--- | :--- | :--- | :--- | :--- |
+| Wrong username / identifier | **`Username incorrect`** | `401` | `null` | No attempt count changed |
+| Wrong password (1st attempt) | **`Invalid password. 2 attempts remaining.`** | `401` | `{ attemptsRemaining: 2, maxAttempts: 3, failedAttempts: 1, accountLocked: false }` | `failedAttempts = 1` |
+| Wrong password (2nd attempt) | **`Invalid password. 1 attempt remaining.`** | `401` | `{ attemptsRemaining: 1, maxAttempts: 3, failedAttempts: 2, accountLocked: false }` | `failedAttempts = 2` |
+| Wrong password (3rd attempt) | **`Account locked due to too many failed attempts. Try again in 30 seconds.`** | `429` | `{ attemptsRemaining: 0, maxAttempts: 3, failedAttempts: 3, accountLocked: true, lockUntil: "<ISO_TIMESTAMP>" }` | Account locked for 30s |
+| Account currently locked | **`Account is locked. Please try again in <X> seconds.`** | `429` | `{ attemptsRemaining: 0, maxAttempts: 3, failedAttempts: 3, accountLocked: true, lockUntil: "<ISO_TIMESTAMP>" }` | Login rejected |
+| Correct password after failed attempts | **`Login successful`** | `200` | `{ token: "...", user: { ... } }` | `failedAttempts = 0`, `lockUntil = null` |
+
+#### Failed Login Response Format Example:
+```json
+{
+  "success": false,
+  "message": "Invalid password. 2 attempts remaining.",
+  "data": {
+    "attemptsRemaining": 2,
+    "maxAttempts": 3,
+    "failedAttempts": 1,
+    "accountLocked": false
+  }
+}
+```
 
 ---
 

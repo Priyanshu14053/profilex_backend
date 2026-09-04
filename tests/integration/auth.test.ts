@@ -119,6 +119,69 @@ describe('Auth Endpoints (/api/v1/auth)', () => {
       expect(res.status).toBe(400);
       expect(res.body.success).toBe(false);
       expect(res.body.message).toBe('Validation failed');
+      expect(res.body.errors[0].message).toBe('Please enter a valid email address');
+    });
+
+    it('should return 400 for email with consecutive dots', async () => {
+      const res = await request(app)
+        .post('/api/v1/auth/register')
+        .send({ ...validRegisterPayload, email: 'john..doe@example.com' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.errors[0].message).toBe('Please enter a valid email address');
+    });
+
+    it('should return 400 for invalid name containing numbers or symbols', async () => {
+      const res = await request(app)
+        .post('/api/v1/auth/register')
+        .send({ ...validRegisterPayload, name: 'John123' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.errors[0].message).toBe('Name must contain only alphabets');
+    });
+
+    it('should return 400 for invalid mobile number', async () => {
+      const res = await request(app)
+        .post('/api/v1/auth/register')
+        .send({ ...validRegisterPayload, mobile: '1234567890' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.errors[0].message).toBe('Mobile number must be 10 digits and start with 7, 8, or 9');
+    });
+
+    it('should return 400 for DOB in the future', async () => {
+      const futureDate = '2099-01-01';
+      const res = await request(app)
+        .post('/api/v1/auth/register')
+        .send({ ...validRegisterPayload, dob: futureDate });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.errors[0].message).toBe('Date of birth cannot be in the future');
+    });
+
+    it('should return 400 for DOB user younger than 13 years', async () => {
+      const recentDate = '2022-01-01';
+      const res = await request(app)
+        .post('/api/v1/auth/register')
+        .send({ ...validRegisterPayload, dob: recentDate });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.errors[0].message).toBe('You must be at least 13 years old');
+    });
+
+    it('should return 400 for invalid username with special chars', async () => {
+      const res = await request(app)
+        .post('/api/v1/auth/register')
+        .send({ ...validRegisterPayload, username: 'user@name!' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.errors[0].message).toBe('Username must be 3-50 chars, letters/numbers/underscore only');
     });
 
     it('should return 400 for weak password (no numbers or too short)', async () => {
@@ -128,6 +191,7 @@ describe('Auth Endpoints (/api/v1/auth)', () => {
 
       expect(res.status).toBe(400);
       expect(res.body.success).toBe(false);
+      expect(res.body.errors[0].message).toBe('Password must be at least 8 characters and contain at least 1 letter and 1 number');
     });
 
     it('should return 400 when required fields are missing', async () => {
@@ -154,9 +218,8 @@ describe('Auth Endpoints (/api/v1/auth)', () => {
       mobile: '9876543210',
       dob: '2002-01-01',
       username: 'priyanshu',
-      password_hash: '',
-      failed_attempts: 0,
-      is_locked: 0,
+      created_at: '2026-08-30 20:00:00',
+      updated_at: '2026-08-30 20:00:00',
     };
 
     it('should return 401 with "Username incorrect" for wrong username/identifier', async () => {
@@ -171,7 +234,7 @@ describe('Auth Endpoints (/api/v1/auth)', () => {
       expect(res.body.message).toBe('Username incorrect');
     });
 
-    it('should return 401 with "Password incorrect. 2 attempts left" on 1st failed attempt', async () => {
+    it('should return 401 with remaining attempts and mobile JSON structure on 1st failed attempt', async () => {
       jest.spyOn(userRepository, 'findByIdentifier').mockResolvedValue({
         ...mockUser,
         password_hash: hashedPassword,
@@ -185,11 +248,17 @@ describe('Auth Endpoints (/api/v1/auth)', () => {
 
       expect(res.status).toBe(401);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toBe('Password incorrect. 2 attempts left');
+      expect(res.body.message).toBe('Invalid password. 2 attempts remaining.');
+      expect(res.body.data).toEqual({
+        attemptsRemaining: 2,
+        maxAttempts: 3,
+        failedAttempts: 1,
+        accountLocked: false,
+      });
       expect(incrementSpy).toHaveBeenCalledWith('test-user-uuid', 1);
     });
 
-    it('should return 401 with "Password incorrect. 1 attempt left" on 2nd failed attempt', async () => {
+    it('should return 401 with remaining attempts and mobile JSON structure on 2nd failed attempt', async () => {
       jest.spyOn(userRepository, 'findByIdentifier').mockResolvedValue({
         ...mockUser,
         password_hash: hashedPassword,
@@ -203,11 +272,17 @@ describe('Auth Endpoints (/api/v1/auth)', () => {
 
       expect(res.status).toBe(401);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toBe('Password incorrect. 1 attempt left');
+      expect(res.body.message).toBe('Invalid password. 1 attempt remaining.');
+      expect(res.body.data).toEqual({
+        attemptsRemaining: 1,
+        maxAttempts: 3,
+        failedAttempts: 2,
+        accountLocked: false,
+      });
       expect(incrementSpy).toHaveBeenCalledWith('test-user-uuid', 2);
     });
 
-    it('should lock account and return 401 with "Account locked. Contact admin" on 3rd failed attempt', async () => {
+    it('should lock account for 30s and return 429 on 3rd failed attempt', async () => {
       jest.spyOn(userRepository, 'findByIdentifier').mockResolvedValue({
         ...mockUser,
         password_hash: hashedPassword,
@@ -219,27 +294,42 @@ describe('Auth Endpoints (/api/v1/auth)', () => {
         .post('/api/v1/auth/login')
         .send({ identifier: 'priyanshu', password: 'WrongPassword' });
 
-      expect(res.status).toBe(401);
+      expect(res.status).toBe(429);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toBe('Account locked. Contact admin');
-      expect(lockSpy).toHaveBeenCalledWith('test-user-uuid', 3);
+      expect(res.body.message).toContain('Account locked due to too many failed attempts');
+      expect(res.body.data).toBeDefined();
+      expect(res.body.data.attemptsRemaining).toBe(0);
+      expect(res.body.data.maxAttempts).toBe(3);
+      expect(res.body.data.failedAttempts).toBe(3);
+      expect(res.body.data.accountLocked).toBe(true);
+      expect(res.body.data.lockUntil).toBeDefined();
+      expect(lockSpy).toHaveBeenCalledWith('test-user-uuid', 3, expect.any(Date));
     });
 
-    it('should reject login immediately if account is already locked', async () => {
+    it('should reject login immediately if account is currently locked', async () => {
+      const futureLock = new Date(Date.now() + 20000).toISOString();
       jest.spyOn(userRepository, 'findByIdentifier').mockResolvedValue({
         ...mockUser,
         password_hash: hashedPassword,
         failed_attempts: 3,
         is_locked: 1,
+        lock_until: futureLock,
       });
 
       const res = await request(app)
         .post('/api/v1/auth/login')
         .send({ identifier: 'priyanshu', password: 'Password123' });
 
-      expect(res.status).toBe(401);
+      expect(res.status).toBe(429);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toBe('Account locked. Contact admin');
+      expect(res.body.message).toContain('Account is locked');
+      expect(res.body.data).toEqual({
+        attemptsRemaining: 0,
+        maxAttempts: 3,
+        failedAttempts: 3,
+        accountLocked: true,
+        lockUntil: futureLock,
+      });
     });
 
     it('should successfully log in with email and reset failed attempts to 0', async () => {
@@ -329,7 +419,7 @@ describe('Auth Endpoints (/api/v1/auth)', () => {
           user_id: 'test-user-uuid',
           identifier: 'priyanshu',
           status: 'FAILED',
-          failure_reason: 'Password incorrect. 2 attempts left',
+          failure_reason: 'Invalid password. 2 attempts remaining.',
           user_agent: 'TestMobileApp',
         })
       );

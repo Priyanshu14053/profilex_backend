@@ -70,6 +70,10 @@ export const ensureSchemaMigrations = async (connectionPool: Pool = pool): Promi
         await connectionPool.query('ALTER TABLE users ADD COLUMN locked_at TIMESTAMP NULL DEFAULT NULL');
         console.log('[Database] Migrated column: locked_at');
       }
+      if (!colNames.includes('lock_until')) {
+        await connectionPool.query('ALTER TABLE users ADD COLUMN lock_until TIMESTAMP NULL DEFAULT NULL');
+        console.log('[Database] Migrated column: lock_until');
+      }
     }
 
     // Ensure login_history table exists

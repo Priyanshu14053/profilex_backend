@@ -221,5 +221,60 @@ describe('Profile Endpoints (/api/v1/profile)', () => {
       expect(res.body.success).toBe(false);
       expect(res.body.message).toBe('Mobile number is already registered');
     });
+
+    it('should return 400 for invalid name containing numbers in profile update', async () => {
+      const res = await request(app)
+        .put('/api/v1/profile')
+        .set('Authorization', `Bearer ${validToken}`)
+        .send({ ...validUpdatePayload, name: 'Invalid123' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.errors[0].message).toBe('Name must contain only alphabets');
+    });
+
+    it('should return 400 for invalid mobile not starting with 7,8,9 in profile update', async () => {
+      const res = await request(app)
+        .put('/api/v1/profile')
+        .set('Authorization', `Bearer ${validToken}`)
+        .send({ ...validUpdatePayload, mobile: '1234567890' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.errors[0].message).toBe('Mobile number must be 10 digits and start with 7, 8, or 9');
+    });
+
+    it('should return 400 for future date of birth in profile update', async () => {
+      const res = await request(app)
+        .put('/api/v1/profile')
+        .set('Authorization', `Bearer ${validToken}`)
+        .send({ ...validUpdatePayload, dob: '2099-01-01' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.errors[0].message).toBe('Date of birth cannot be in the future');
+    });
+
+    it('should return 400 for date of birth under 13 years old in profile update', async () => {
+      const res = await request(app)
+        .put('/api/v1/profile')
+        .set('Authorization', `Bearer ${validToken}`)
+        .send({ ...validUpdatePayload, dob: '2023-01-01' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.errors[0].message).toBe('You must be at least 13 years old');
+    });
+
+    it('should return 400 for invalid username with symbols in profile update', async () => {
+      const res = await request(app)
+        .put('/api/v1/profile')
+        .set('Authorization', `Bearer ${validToken}`)
+        .send({ ...validUpdatePayload, username: 'invalid@user' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.errors[0].message).toBe('Username must be 3-50 chars, letters/numbers/underscore only');
+    });
   });
 });

@@ -3,7 +3,7 @@ import { userRepository, UserRepository } from '../repositories/user.repository'
 import { loginHistoryRepository, LoginHistoryRepository } from '../repositories/login-history.repository';
 import { hashPassword, comparePassword } from '../utils/password';
 import { signJwt } from '../utils/jwt';
-import { ConflictError, UnauthorizedError } from '../utils/errors';
+import { ConflictError, UnauthorizedError, TooManyRequestsError } from '../utils/errors';
 import { AuthResponseData, UserProfileResponse } from '../models/user.model';
 
 export interface RegisterDto {
@@ -24,6 +24,14 @@ export interface LoginMetadata {
   ip_address?: string;
   user_agent?: string;
 }
+
+const parseLockUntilTime = (lockUntilVal: any): number | null => {
+  if (!lockUntilVal) return null;
+  if (lockUntilVal instanceof Date) return lockUntilVal.getTime();
+  const str = String(lockUntilVal);
+  const time = new Date(str.includes('T') ? str : str.replace(' ', 'T')).getTime();
+  return isNaN(time) ? null : time;
+};
 
 export class AuthService {
   constructor(
@@ -84,13 +92,13 @@ export class AuthService {
 
   /**
    * Logs in a user by identifier (email or username) and password
-   * Enforces account lockout policy:
-   * - Wrong username: "Username incorrect"
-   * - Wrong password 1st time: "Password incorrect. 2 attempts left"
-   * - Wrong password 2nd time: "Password incorrect. 1 attempt left"
-   * - Wrong password 3rd time: "Account locked. Contact admin"
-   * - Account already locked: "Account locked. Contact admin"
-   * - Login succeeds: attempts reset to 0 (3 available again)
+   * Enforces 3-failed-attempt lockout policy:
+   * - Wrong identifier: "Username incorrect" (HTTP 401)
+   * - 1st failed attempt: "Invalid password. 2 attempts remaining." (HTTP 401)
+   * - 2nd failed attempt: "Invalid password. 1 attempt remaining." (HTTP 401)
+   * - 3rd failed attempt: Lockout for 30s (HTTP 429)
+   * - Account currently locked: Lockout error with remaining seconds (HTTP 429)
+   * - Login succeeds: attempts reset to 0 and lockUntil = null
    */
   async login(dto: LoginDto, meta?: LoginMetadata): Promise<AuthResponseData> {
     const identifier = dto.identifier.trim();
@@ -110,44 +118,89 @@ export class AuthService {
       throw new UnauthorizedError('Username incorrect');
     }
 
-    const isLocked = Boolean(user.is_locked) || (user.failed_attempts !== undefined && user.failed_attempts >= 3);
-    if (isLocked) {
+    const lockUntilVal = user.lock_until || user.lockUntil;
+    const lockUntilTime = parseLockUntilTime(lockUntilVal);
+    const now = Date.now();
+
+    // Check if account is currently locked (active 30s lockout or legacy lock)
+    const isCurrentlyLocked = (lockUntilTime !== null && lockUntilTime > now) ||
+      (lockUntilTime === null && Boolean(user.is_locked));
+
+    if (isCurrentlyLocked) {
+      const secondsLeft = lockUntilTime ? Math.max(1, Math.ceil((lockUntilTime - now) / 1000)) : 30;
+      const message = `Account is locked. Please try again in ${secondsLeft} second${secondsLeft === 1 ? '' : 's'}.`;
+
+      const failureData = {
+        attemptsRemaining: 0,
+        maxAttempts: 3,
+        failedAttempts: user.failed_attempts ? Number(user.failed_attempts) : 3,
+        accountLocked: true,
+        ...(lockUntilVal ? { lockUntil: typeof lockUntilVal === 'string' ? lockUntilVal : (lockUntilVal as any).toISOString?.() || String(lockUntilVal) } : {}),
+      };
+
       await this.loginHistoryRepo
         .create({
           user_id: user.id,
           identifier,
           status: 'LOCKED',
-          failure_reason: 'Account locked. Contact admin',
+          failure_reason: message,
           ip_address: meta?.ip_address,
           user_agent: meta?.user_agent,
         })
         .catch((err) => console.warn(`[LoginHistory] Failed to log: ${err.message}`));
-      throw new UnauthorizedError('Account locked. Contact admin');
+
+      throw new TooManyRequestsError(message, failureData);
     }
 
     const isMatch = await comparePassword(dto.password, user.password_hash);
     if (!isMatch) {
-      const currentAttempts = user.failed_attempts ? Number(user.failed_attempts) : 0;
-      const newAttempts = currentAttempts + 1;
+      // If previous lock expired, reset base attempts to 0 for a fresh cycle
+      const baseAttempts = (lockUntilTime !== null && lockUntilTime <= now)
+        ? 0
+        : (user.failed_attempts ? Number(user.failed_attempts) : 0);
+      const newAttempts = baseAttempts + 1;
 
       if (newAttempts >= 3) {
-        await this.userRepo.lockAccount(user.id, 3);
+        const lockoutDurationMs = 30 * 1000;
+        const lockUntil = new Date(Date.now() + lockoutDurationMs);
+        await this.userRepo.lockAccount(user.id, 3, lockUntil);
+        const lockUntilIso = lockUntil.toISOString();
+
+        const failureData = {
+          attemptsRemaining: 0,
+          maxAttempts: 3,
+          failedAttempts: 3,
+          accountLocked: true,
+          lockUntil: lockUntilIso,
+        };
+
+        const message = 'Account locked due to too many failed attempts. Try again in 30 seconds.';
+
         await this.loginHistoryRepo
           .create({
             user_id: user.id,
             identifier,
             status: 'LOCKED',
-            failure_reason: 'Account locked. Contact admin (3 failed attempts)',
+            failure_reason: `${message} (3 failed attempts)`,
             ip_address: meta?.ip_address,
             user_agent: meta?.user_agent,
           })
           .catch((err) => console.warn(`[LoginHistory] Failed to log: ${err.message}`));
-        throw new UnauthorizedError('Account locked. Contact admin');
+
+        throw new TooManyRequestsError(message, failureData);
       } else {
         await this.userRepo.incrementFailedAttempts(user.id, newAttempts);
         const remaining = 3 - newAttempts;
         const attemptWord = remaining === 1 ? 'attempt' : 'attempts';
-        const message = `Password incorrect. ${remaining} ${attemptWord} left`;
+        const message = `Invalid password. ${remaining} ${attemptWord} remaining.`;
+
+        const failureData = {
+          attemptsRemaining: remaining,
+          maxAttempts: 3,
+          failedAttempts: newAttempts,
+          accountLocked: false,
+        };
+
         await this.loginHistoryRepo
           .create({
             user_id: user.id,
@@ -158,12 +211,18 @@ export class AuthService {
             user_agent: meta?.user_agent,
           })
           .catch((err) => console.warn(`[LoginHistory] Failed to log: ${err.message}`));
-        throw new UnauthorizedError(message);
+
+        throw new UnauthorizedError(message, failureData);
       }
     }
 
-    // Reset failed attempts upon successful login if user had prior failed attempts
-    if (user.failed_attempts && Number(user.failed_attempts) > 0) {
+    // Reset failed attempts and lock status upon successful login if user had prior failed attempts or lock
+    if (
+      (user.failed_attempts && Number(user.failed_attempts) > 0) ||
+      Boolean(user.is_locked) ||
+      user.lock_until ||
+      user.lockUntil
+    ) {
       await this.userRepo.resetFailedAttempts(user.id);
     }
 

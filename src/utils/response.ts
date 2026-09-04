@@ -25,11 +25,13 @@ export const sendError = (
   res: Response,
   message: string,
   statusCode: number = 500,
-  errors?: any[]
+  errors?: any[],
+  data?: any
 ): Response => {
   const body: ApiResponse = {
     success: false,
     message,
+    ...(data !== undefined && { data }),
     ...(errors !== undefined && { errors }),
   };
   return res.status(statusCode).json(body);

@@ -17,9 +17,9 @@ export const errorHandler = (
     }
   }
 
-  // Handle known AppError subclasses (e.g. ConflictError, UnauthorizedError, NotFoundError, BadRequestError)
+  // Handle known AppError subclasses (e.g. ConflictError, UnauthorizedError, TooManyRequestsError, NotFoundError, BadRequestError)
   if (err instanceof AppError) {
-    sendError(res, err.message, err.statusCode, err.errors);
+    sendError(res, err.message, err.statusCode, err.errors, err.data);
     return;
   }
 

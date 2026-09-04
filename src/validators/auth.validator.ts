@@ -7,14 +7,22 @@ export const registerValidator = [
     .notEmpty()
     .withMessage('Name is required')
     .isLength({ max: 100 })
-    .withMessage('Name must be at most 100 characters'),
+    .withMessage('Name must contain only alphabets')
+    .matches(/^[a-zA-Z\s]+$/)
+    .withMessage('Name must contain only alphabets'),
 
   body('email')
     .trim()
     .notEmpty()
     .withMessage('Email is required')
     .isEmail()
-    .withMessage('Please provide a valid email address')
+    .withMessage('Please enter a valid email address')
+    .custom((val) => {
+      if (typeof val === 'string' && val.includes('..')) {
+        throw new Error('Please enter a valid email address');
+      }
+      return true;
+    })
     .normalizeEmail()
     .isLength({ max: 255 })
     .withMessage('Email must be at most 255 characters'),
@@ -23,8 +31,8 @@ export const registerValidator = [
     .trim()
     .notEmpty()
     .withMessage('Mobile number is required')
-    .matches(/^[0-9+]{7,20}$/)
-    .withMessage('Mobile number must be between 7 and 20 digits and can include leading +'),
+    .matches(/^[789]\d{9}$/)
+    .withMessage('Mobile number must be 10 digits and start with 7, 8, or 9'),
 
   body('dob')
     .trim()
@@ -33,13 +41,36 @@ export const registerValidator = [
     .matches(/^\d{4}-\d{2}-\d{2}$/)
     .withMessage('Date of birth must be in YYYY-MM-DD format')
     .custom((val) => {
-      const parsed = new Date(val);
-      if (isNaN(parsed.getTime())) {
+      const parts = val.split('-').map(Number);
+      if (parts.length !== 3) {
+        throw new Error('Date of birth must be in YYYY-MM-DD format');
+      }
+      const [year, month, day] = parts;
+      const parsed = new Date(year, month - 1, day);
+      if (
+        parsed.getFullYear() !== year ||
+        parsed.getMonth() !== month - 1 ||
+        parsed.getDate() !== day
+      ) {
         throw new Error('Invalid date value');
       }
-      if (parsed > new Date()) {
+
+      const today = new Date();
+      const todayDateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      if (parsed > todayDateOnly) {
         throw new Error('Date of birth cannot be in the future');
       }
+
+      let age = today.getFullYear() - parsed.getFullYear();
+      const monthDiff = today.getMonth() - parsed.getMonth();
+      if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < parsed.getDate())) {
+        age--;
+      }
+
+      if (age < 13) {
+        throw new Error('You must be at least 13 years old');
+      }
+
       return true;
     }),
 
@@ -47,18 +78,18 @@ export const registerValidator = [
     .trim()
     .notEmpty()
     .withMessage('Username is required')
-    .isLength({ min: 3, max: 50 })
-    .withMessage('Username must be between 3 and 50 characters')
-    .matches(/^[a-zA-Z0-9_]+$/)
-    .withMessage('Username can only contain alphanumeric characters and underscores'),
+    .matches(/^[a-zA-Z0-9_]{3,50}$/)
+    .withMessage('Username must be 3-50 chars, letters/numbers/underscore only'),
 
   body('password')
     .notEmpty()
     .withMessage('Password is required')
-    .isLength({ min: 8 })
-    .withMessage('Password must be at least 8 characters long')
-    .matches(/^(?=.*[A-Za-z])(?=.*\d)/)
-    .withMessage('Password must contain at least one letter and one number'),
+    .custom((val) => {
+      if (typeof val !== 'string' || val.length < 8 || !/^(?=.*[A-Za-z])(?=.*\d)/.test(val)) {
+        throw new Error('Password must be at least 8 characters and contain at least 1 letter and 1 number');
+      }
+      return true;
+    }),
 
   validateRequest,
 ];
